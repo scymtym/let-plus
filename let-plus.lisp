@@ -162,7 +162,11 @@ NOTE: It is unlikely that you need to used this function, see the note above its
 ;;; helper functions
 
 (defun expand-slot-forms (slots accessor-generator)
-  "Return a list of expanded bindings, calling (ACCESSOR-GENERATOR KEY)"
+  "Return a list of expanded bindings, calling
+
+  (ACCESSOR-GENERATOR KEY)
+
+."
   (let (bindings)
     (loop for entry :in slots do
       (destructuring-bind (variable &optional (key variable))
@@ -173,7 +177,15 @@ NOTE: It is unlikely that you need to used this function, see the note above its
 
 
 (defun expand-entry-forms (entries accessor-generator)
-  "Return a list of expanded bindings from ENTRIES, calling (ACESSOR-GENERATOR KEY DEFAULT).  Each entry is (VARIABLE &OPTIONAL KEY DEFAULT).  When KEY is NIL, VARIABLE is used."
+  "Return a list of expanded bindings from, calling
+
+  (ACCESSOR-GENERATOR KEY DEFAULT)
+
+. Each entry is
+
+  (VARIABLE &optional KEY DEFAULT)
+
+. When KEY is NIL, VARIABLE is used."
   (mapcar (lambda (entry)
             (destructuring-bind (variable &optional key default)
                 (ensure-list entry)
