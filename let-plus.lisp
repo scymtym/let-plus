@@ -61,28 +61,30 @@ NOTE: It is unlikely that you need to used this function, see the note above its
     "Test whether the symbol's name starts with a & character."
     (char= (aref (symbol-name symbol) 0) #\&)))
 
-(defgeneric let+-expansion (form value body)
+(defgeneric let+-expansion (form value body declarations)
   (:documentation "Return an expansion for a LET+ form.")
-  (:method (form value body)
-    (declare (ignore value body))
+  (:method (form value body declarations)
+    (declare (ignore value body declarations))
     (error "LET+ could not recognize ~A." form))
-  (:method ((variable null) value body)
+  (:method ((variable null) value body declarations)
     `(destructuring-bind nil ,value
+       ,@declarations
        ,@body))
-  (:method ((variable symbol) value body)
+  (:method ((variable symbol) value body declarations)
     (cond
       ((ignored? variable) `(progn ,@body))
       ((&-symbol? variable)
        (warn "Possibly left out one level of nesting in LET+ form (~A ~A)."
              variable value))
       (t `(let ((,variable ,@(when value `(,value))))
+            ,@declarations
             ,@body))))
-  (:method ((form list) value body)
-    (let+-expansion-for-list (first form) (rest form) value body)))
+  (:method ((form list) value body declarations)
+    (let+-expansion-for-list (first form) (rest form) value body declarations)))
 
-(defgeneric let+-expansion-for-list (first rest value body)
+(defgeneric let+-expansion-for-list (first rest value body declarations)
   (:documentation "LET+-EXPANSION calls this for lists, see the latter for semantics of returned values.")
-  (:method (first rest value body)
+  (:method (first rest value body declarations)
     ;; forms not recognized as anything else are destructured
     (when (and (symbolp first) (not (ignored? first)) (&-symbol? first)
                (not (find first lambda-list-keywords)))
@@ -91,24 +93,29 @@ NOTE: It is unlikely that you need to used this function, see the note above its
       (multiple-value-bind (form ignored) (replace-ignored form)
         `(destructuring-bind ,form ,value
            (declare (ignore ,@ignored))
+           ,@declarations
            ,@body)))))
 
 (defmacro let+ (bindings &body body)
-  "Destructuring bindings.  See the documentation of the LET-PLUS library.  Most accepted forms start with &."
-  (labels ((expand (bindings)
-             (destructuring-bind (binding &rest other-bindings) bindings
-               (destructuring-bind (form &optional value)
-                   (ensure-list binding)
-                 (let+-expansion form value (aif other-bindings
-                                                 (list (expand it))
-                                                 body))))))
-    (if bindings
-        (expand bindings)
-        `(progn ,@body))))
+  "Destructuring bindings.  See the documentation of the LET-PLUS library. Most accepted forms start with &."
+  (multiple-value-bind (body declarations) (parse-body body)
+    (labels ((expand (bindings)
+               (destructuring-bind (binding &rest other-bindings) bindings
+                 (destructuring-bind (form &optional value)
+                     (ensure-list binding)
+                   (let+-expansion form value
+                                   (aif other-bindings
+                                        (list (expand it))
+                                        body)
+                                   (unless other-bindings declarations))))))
+      (if bindings
+          (expand bindings)
+          `(progn ,@body)))))
 
 (defmacro define-let+-expansion ((name arguments &key
                                        (value-var 'value)
                                        (body-var 'body)
+                                       (declarations-var 'declarations)
                                        (uses-value? t)
                                        (once-only? uses-value?))
                                  &body body)
@@ -136,7 +143,8 @@ NOTE: It is unlikely that you need to used this function, see the note above its
            ,whole)
          (defmethod let+-expansion-for-list ((first (eql ',name))
                                              ,arguments-var ,value-var
-                                             ,body-var)
+                                             ,body-var
+                                             ,declarations-var)
            ,(if uses-value?
                 `(assert ,value-var () "Missing value form in ~A." ',name)
                 `(assert (not ,value-var) ()
@@ -214,6 +222,7 @@ NOTE: It is unlikely that you need to used this function, see the note above its
   "LET+ form, similar to WITH-ACCESSORS, but read-only."
   `(let+ ,(expand-slot-forms accessors (lambda (accessor)
                                          `(,accessor ,value)))
+     ,@declarations
      ,@body))
 
 (define-let+-expansion (&slots slots :once-only? nil)
@@ -225,6 +234,7 @@ NOTE: It is unlikely that you need to used this function, see the note above its
   "LET+ form, similar to WITH-SLOTS but read-only."
   `(let+ ,(expand-slot-forms slots
                              (lambda (slot) `(slot-value ,value ',slot)))
+     ,@declarations
      ,@body))
 
 (define-let+-expansion (&structure (conc-name &rest slots))
@@ -242,6 +252,7 @@ NOTE: It is unlikely that you need to used this function, see the note above its
   `(let+ ,(expand-slot-forms slots
                              (lambda (slot)
                                `(,(symbolicate conc-name slot) ,value)))
+     ,@declarations
      ,@body))
 
 (define-let+-expansion (&values values :once-only? nil)
@@ -252,9 +263,10 @@ NOTE: It is unlikely that you need to used this function, see the note above its
                                 when (ignored? v)
                                   collect g)))
        (let+ ,(remove-if (compose #'ignored? #'car) values-and-temps)
+         ,@declarations
          ,@body))))
 
-(defmethod let+-expansion ((array array) value body)
+(defmethod let+-expansion ((array array) value body declarations)
   "LET+ expansion for mapping array elements to variables."
   (let (bindings
         (value-var (gensym "VALUE")))
@@ -268,6 +280,7 @@ NOTE: It is unlikely that you need to used this function, see the note above its
        (assert (equal (array-dimensions ,value-var)
                       ',(array-dimensions array)))
        (let+ ,(nreverse bindings)
+         ,@declarations
          ,@body))))
 
 
@@ -281,6 +294,7 @@ NOTE: It is unlikely that you need to used this function, see the note above its
   "LET+ form, mapping (variable &rest subscripts) specifications to array-elements.  Read-only accessor, values assigned to VARIABLEs."
   (once-only (value)
     `(let+ ,(expand-array-elements value array-elements)
+       ,@declarations
        ,@body)))
 
 (define-let+-expansion (&flet (function-name lambda-list
@@ -288,6 +302,7 @@ NOTE: It is unlikely that you need to used this function, see the note above its
                            :uses-value? nil)
   "LET+ form for function definitions.  Expands into an FLET."
   `(flet ((,function-name ,lambda-list ,@function-body))
+     ,@declarations
      ,@body))
 
 (define-let+-expansion (&labels (function-name lambda-list
@@ -301,6 +316,7 @@ NOTE: It is unlikely that you need to used this function, see the note above its
            ,@first-body
            ,@(rest body)))
       `(labels ((,function-name ,lambda-list ,@function-body))
+         ,@declarations
          ,@body)))
 
 (define-let+-expansion (&macrolet (macro-name lambda-list  &body macro-body)
@@ -341,4 +357,5 @@ NOTE: It is unlikely that you need to used this function, see the note above its
   "LET+ form for hash tables.  Each entry is (variable &optional key default).  Read only version."
   `(let+ ,(expand-entry-forms entries
                               (lambda (key default) `(gethash ,key ,value ,default)))
+     ,@declarations
      ,@body))

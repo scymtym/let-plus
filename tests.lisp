@@ -250,3 +250,9 @@ should)."
   (ensure-error (let+ ((() '(1)))))
   ;; (ensure-error (let+ ((() 1))))
 )
+
+(addtest (let-plus-tests)
+  test-declarations
+  (ensure (let+ ((a 1))
+            (declare (type integer a))
+            a)))
